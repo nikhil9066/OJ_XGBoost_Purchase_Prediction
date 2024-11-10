@@ -1,0 +1,140 @@
+---
+title: "OJ Purchase Prediction Using XGBoost"
+author: "Nikhil Prema Chandra Rao"
+date: "2024-11-10"
+output: html_document
+---
+
+# Introduction
+In this project, we create a prediction model using the OJ dataset from the ISLR2 library. The aim is to guess if a customer will buy Citrus Hill (CH) or Minute Maid (MM) orange juice by looking at things like the price, information about the store, and other important details.
+
+We use XGBoost, a strong and fast tool, for making classifications. Gradient boosting takes the results from several simple models to make more accurate predictions. XGBoost is especially good at managing big data and improving how well predictions are made.
+
+```{r setup, include=FALSE}
+# Load necessary libraries
+library(ISLR2)
+library(xgboost)
+library(caret)
+library(dplyr)
+library(ggplot2) 
+library(pROC)
+library(PRROC)
+library(corrplot)
+```
+
+# Data Preprocessing
+First, we will encode the `Purchase` variable as a binary target, with `CH` as 1 and `MM` as 0, and split the dataset into training and test sets (50:50 ratio).
+
+```{r}
+# Set seed for reproducibility
+set.seed(555)
+
+# Encode Purchase as binary: 1 if "CH", 0 if "MM"
+OJ$Purchase <- as.numeric(OJ$Purchase == "CH")
+
+str(OJ) 
+?OJ 
+sum(is.na(OJ))
+```
+
+### Key Variables in the Dataset
+- **Purchase**: The binary target variable (1 for CH, 0 for MM), which we encoded earlier.
+- **WeekofPurchase**: The week number when the purchase was made.
+- **StoreID**: The ID of the store where the purchase took place.
+- **PriceCH**: Price of Citrus Hill (CH) in that week.
+- **PriceMM**: Price of Minute Maid (MM) in that week.
+- **DiscCH**: Discount on Citrus Hill during that week.
+- **DiscMM**: Discount on Minute Maid during that week.
+- **SpecialCH**: Whether Citrus Hill was on special promotion.
+- **SpecialMM**: Whether Minute Maid was on special promotion.
+- **LoyalCH**: A loyalty score for customers buying Citrus Hill.
+- **SalePriceCH**: Final sale price for Citrus Hill after discounts.
+- **SalePriceMM**: Final sale price for Minute Maid after discounts.
+- **PriceDiff**: The difference between the sale prices of Citrus Hill and Minute Maid.
+- **Store7**: A factor indicating whether the purchase occurred at store 7 (Yes/No).
+- **PctDiscMM**: Percentage discount on Minute Maid.
+- **PctDiscCH**: Percentage discount on Citrus Hill.
+- **ListPriceDiff**: Difference in list prices between Citrus Hill and Minute Maid (before discounts).
+- **STORE**: Additional store information.
+
+### Encoding the Target Variable
+The `Purchase` column originally contains categorical values: 
+- `"CH"` for Citrus Hill and 
+- `"MM"` for Minute Maid.
+
+We convert this column into a numeric binary variable:
+- `1` for Citrus Hill ("CH")
+- `0` for Minute Maid ("MM")
+
+This is achieved by creating a logical vector with `== "CH"`, which is then converted into `1` or `0` using the `as.numeric()` function.
+
+
+The dataset has 1,070 observations with 18 variables, and the Purchase variable is now binary (1 for Citrus Hill, 0 for Minute Maid). All variables are numeric or factor types, and there are no missing values. This sets the dataset up for predictive modeling using machine learning techniques like XGBoost.
+
+## Prepare the Dataset:
+```{r}
+# Split the dataset into 50:50 train-test sets
+trainIndex <- createDataPartition(OJ$Purchase, p = 0.5, list = FALSE)
+train_data <- OJ[trainIndex, ]
+test_data <- OJ[-trainIndex, ]
+```
+
+This code divides the `OJ` dataset into two parts: training and testing. `trainIndex` randomly picks 50% of the data based on the `Purchase` variable. Then, `train_data` is made using the rows from `trainIndex` (for training), and `test_data` is made by using the rows that are not in `trainIndex` (for testing).
+
+## Visualize Target Variable Distribution
+### Target Variable Distribution (Purchase)
+```{r}
+ggplot(OJ, aes(x = factor(Purchase))) +
+  geom_bar(aes(fill = factor(Purchase)), color = "black") +
+  labs(title = "Target Variable Distribution (Purchase)", x = "Purchase (CH=1, MM=0)", y = "Count") +
+  theme_minimal()
+```
+
+The picture is a bar graph showing how a variable called "Purchase" is spread out. This variable has two options: 0 and 1. This variable shows a buying decision, where 0 means choosing "MM" and 1 means choosing "CH. " Each bar shows how many times each choice was made, with the red bar for "0" (MM choice) and the turquoise bar for "1" (CH choice). The height of each bar shows how many times something happened in each category. The bar for "1" (CH) is taller than the bar for "0" (MM), which means more people chose "CH" than "MM" when making their purchase decisions in this data. This distribution shows how the two groups in the target variable compare to each other. This is important for checking if there is any bias or imbalance in the dataset, especially when dealing with a classification problem.
+
+###  Feature Correlation Matrix
+
+```{r}
+numeric_features <- train_data %>%
+  select(where(is.numeric)) %>%
+  select(-Purchase)  # Exclude the target variable for correlation
+
+cor_matrix <- cor(numeric_features, use = "complete.obs")
+corrplot(cor_matrix, method = "color", addCoef.col = "black", tl.col = "black",
+         title = "Feature Correlation Matrix", mar = c(0, 0, 2, 0))
+```
+
+This is a heatmap showing how different parts of a dataset are related to each other. The matrix is a square chart that shows how two features are related to each other. Each box in the chart has a number between -1 and 1 that represents this relationship. A correlation coefficient of +1 means there is a perfect positive relationship between two things, while -1 means there is a perfect negative relationship. In this chart, darker blue colors show strong positive connections, meaning that when one thing goes up, the other usually goes up too. On the other hand, darker red colors show a strong negative connection, meaning that when one thing goes up, the other goes down. For example, "PriceCH" and "PriceMM" have a strong positive relationship, shown by a dark blue cell. On the other hand, "DiscCH" and "SpecialMM" have a negative relationship, indicated by a red cell. The diagonal of the matrix shows how each feature relates to itself, which always has a correlation of 1 (the darkest blue). The color bar on the right shows the range of correlation values from -1 to +1. It helps you understand what each cell's color means. This chart helps identify features that are closely related to each other, which is important for choosing the right features or preparing the data.
+
+```{r}
+# Convert categorical variables to numeric using model.matrix
+train_x <- model.matrix(Purchase ~ . - 1, data = train_data)  # Exclude intercept
+test_x <- model.matrix(Purchase ~ . - 1, data = test_data)
+
+# Extract target variables
+train_y <- train_data$Purchase
+test_y <- test_data$Purchase
+
+# Convert datasets to DMatrix format
+dtrain <- xgb.DMatrix(data = train_x, label = train_y)
+dtest <- xgb.DMatrix(data = test_x, label = test_y)
+```
+
+```{r}
+# Plot feature distributions (e.g., PriceCH, PriceMM, and StoreID)
+ggplot(train_data, aes(x = PriceCH)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "black") +
+  labs(title = "Distribution of PriceCH", x = "PriceCH", y = "Frequency") +
+  theme_minimal()
+
+ggplot(train_data, aes(x = PriceMM)) +
+  geom_histogram(bins = 30, fill = "salmon", color = "black") +
+  labs(title = "Distribution of PriceMM", x = "PriceMM", y = "Frequency") +
+  theme_minimal()
+
+ggplot(train_data, aes(x = StoreID)) +
+  geom_bar(fill = "lightblue", color = "black") +
+  labs(title = "Distribution of StoreID", x = "StoreID", y = "Frequency") +
+  theme_minimal()
+```
+
