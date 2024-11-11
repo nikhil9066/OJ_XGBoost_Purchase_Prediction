@@ -214,6 +214,7 @@ abline(a = 0, b = 1, col = "red", lty = 2)
 text(0.5, 0.4, paste("AUC =", round(roc_curve$auc, 3)), cex = 1.2, col = "black")
 
 # Create a data frame for ROC and Precision-Recall curves
+pr_curve <- pr.curve(scores.class0 = test_preds_prob, weights.class0 = test_y, curve = TRUE)
 roc_data <- data.frame(Specificity = roc_curve$specificities, Sensitivity = roc_curve$sensitivities, Curve = "ROC")
 pr_data <- data.frame(Specificity = pr_curve$curve[,1], Sensitivity = pr_curve$curve[,2], Curve = "Precision-Recall")
 
